@@ -23,8 +23,10 @@ import unittest
 
 from pyspark import SparkContext
 from pyspark.sql import SparkSession, Column, Row
-from pyspark.sql.functions import UserDefinedFunction, udf
-from pyspark.sql.types import *
+from pyspark.sql.functions import udf
+from pyspark.sql.udf import UserDefinedFunction
+from pyspark.sql.types import StringType, IntegerType, BooleanType, DoubleType, LongType, \
+    ArrayType, StructType, StructField
 from pyspark.sql.utils import AnalysisException
 from pyspark.testing.sqlutils import ReusedSQLTestCase, test_compiled, test_not_compiled_message
 from pyspark.testing.utils import QuietTest
@@ -96,7 +98,7 @@ class UDFTests(ReusedSQLTestCase):
 
     def test_udf_registration_return_type_not_none(self):
         with QuietTest(self.sc):
-            with self.assertRaisesRegexp(TypeError, "Invalid returnType"):
+            with self.assertRaisesRegexp(TypeError, "Invalid return type"):
                 self.spark.catalog.registerFunction(
                     "f", UserDefinedFunction(lambda x, y: len(x) + y, StringType()), StringType())
 
@@ -197,9 +199,12 @@ class UDFTests(ReusedSQLTestCase):
         left = self.spark.createDataFrame([Row(a=1)])
         right = self.spark.createDataFrame([Row(b=1)])
         f = udf(lambda a, b: a == b, BooleanType())
+        # The udf uses attributes from both sides of join, so it is pulled out as Filter +
+        # Cross join.
         df = left.join(right, f("a", "b"))
-        with self.assertRaisesRegexp(AnalysisException, 'Detected implicit cartesian product'):
-            df.collect()
+        with self.sql_conf({"spark.sql.crossJoin.enabled": False}):
+            with self.assertRaisesRegexp(AnalysisException, 'Detected implicit cartesian product'):
+                df.collect()
         with self.sql_conf({"spark.sql.crossJoin.enabled": True}):
             self.assertEqual(df.collect(), [Row(a=1, b=1)])
 
@@ -215,17 +220,6 @@ class UDFTests(ReusedSQLTestCase):
         with self.sql_conf({"spark.sql.crossJoin.enabled": True}):
             self.assertEqual(df.collect(), [Row(a=1, b=1)])
 
-    def test_udf_in_left_semi_join_condition(self):
-        # regression test for SPARK-25314
-        left = self.spark.createDataFrame([Row(a=1, a1=1, a2=1), Row(a=2, a1=2, a2=2)])
-        right = self.spark.createDataFrame([Row(b=1, b1=1, b2=1)])
-        f = udf(lambda a, b: a == b, BooleanType())
-        df = left.join(right, f("a", "b"), "leftsemi")
-        with self.assertRaisesRegexp(AnalysisException, 'Detected implicit cartesian product'):
-            df.collect()
-        with self.sql_conf({"spark.sql.crossJoin.enabled": True}):
-            self.assertEqual(df.collect(), [Row(a=1, a1=1, a2=1)])
-
     def test_udf_and_common_filter_in_join_condition(self):
         # regression test for SPARK-25314
         # test the complex scenario with both udf and common filter
@@ -236,19 +230,9 @@ class UDFTests(ReusedSQLTestCase):
         # do not need spark.sql.crossJoin.enabled=true for udf is not the only join condition.
         self.assertEqual(df.collect(), [Row(a=1, a1=1, a2=1, b=1, b1=1, b2=1)])
 
-    def test_udf_and_common_filter_in_left_semi_join_condition(self):
-        # regression test for SPARK-25314
-        # test the complex scenario with both udf and common filter
-        left = self.spark.createDataFrame([Row(a=1, a1=1, a2=1), Row(a=2, a1=2, a2=2)])
-        right = self.spark.createDataFrame([Row(b=1, b1=1, b2=1), Row(b=1, b1=3, b2=1)])
-        f = udf(lambda a, b: a == b, BooleanType())
-        df = left.join(right, [f("a", "b"), left.a1 == right.b1], "left_semi")
-        # do not need spark.sql.crossJoin.enabled=true for udf is not the only join condition.
-        self.assertEqual(df.collect(), [Row(a=1, a1=1, a2=1)])
-
     def test_udf_not_supported_in_join_condition(self):
         # regression test for SPARK-25314
-        # test python udf is not supported in join type besides left_semi and inner join.
+        # test python udf is not supported in join type except inner join.
         left = self.spark.createDataFrame([Row(a=1, a1=1, a2=1), Row(a=2, a1=2, a2=2)])
         right = self.spark.createDataFrame([Row(b=1, b1=1, b2=1), Row(b=1, b1=3, b2=1)])
         f = udf(lambda a, b: a == b, BooleanType())
@@ -262,6 +246,15 @@ class UDFTests(ReusedSQLTestCase):
         runWithJoinType("left", "LeftOuter")
         runWithJoinType("right", "RightOuter")
         runWithJoinType("leftanti", "LeftAnti")
+        runWithJoinType("leftsemi", "LeftSemi")
+
+    def test_udf_as_join_condition(self):
+        left = self.spark.createDataFrame([Row(a=1, a1=1, a2=1), Row(a=2, a1=2, a2=2)])
+        right = self.spark.createDataFrame([Row(b=1, b1=1, b2=1), Row(b=1, b1=3, b2=1)])
+        f = udf(lambda a: a, IntegerType())
+
+        df = left.join(right, [f("a") == f("b"), left.a1 == right.b1])
+        self.assertEqual(df.collect(), [Row(a=1, a1=1, a2=1, b=1, b1=1, b2=1)])
 
     def test_udf_without_arguments(self):
         self.spark.catalog.registerFunction("foo", lambda: "bar")
@@ -292,7 +285,6 @@ class UDFTests(ReusedSQLTestCase):
     def test_udf_with_filter_function(self):
         df = self.spark.createDataFrame([(1, "1"), (2, "2"), (1, "2"), (1, "2")], ["key", "value"])
         from pyspark.sql.functions import col
-        from pyspark.sql.types import BooleanType
 
         my_filter = udf(lambda a: a < 2, BooleanType())
         sel = df.select(col("key"), col("value")).filter((my_filter(col("key"))) & (df.value < "2"))
@@ -301,7 +293,6 @@ class UDFTests(ReusedSQLTestCase):
     def test_udf_with_aggregate_function(self):
         df = self.spark.createDataFrame([(1, "1"), (2, "2"), (1, "2"), (1, "2")], ["key", "value"])
         from pyspark.sql.functions import col, sum
-        from pyspark.sql.types import BooleanType
 
         my_filter = udf(lambda a: a == 1, BooleanType())
         sel = df.select(col("key")).distinct().filter(my_filter(col("key")))
@@ -346,7 +337,6 @@ class UDFTests(ReusedSQLTestCase):
         my_copy = udf(lambda x: x, IntegerType())
         df = self.spark.range(10).orderBy("id")
         res = df.select(df.id, my_copy(df.id).alias("copy")).limit(1)
-        res.explain(True)
         self.assertEqual(res.collect(), [Row(id=0, copy=0)])
 
     def test_udf_registration_returns_udf(self):
@@ -366,6 +356,32 @@ class UDFTests(ReusedSQLTestCase):
             df.selectExpr("add_four(id) AS plus_four").collect(),
             df.select(add_four("id").alias("plus_four")).collect()
         )
+
+    @unittest.skipIf(not test_compiled, test_not_compiled_message)  # type: ignore
+    def test_register_java_function(self):
+        self.spark.udf.registerJavaFunction(
+            "javaStringLength", "test.org.apache.spark.sql.JavaStringLength", IntegerType())
+        [value] = self.spark.sql("SELECT javaStringLength('test')").first()
+        self.assertEqual(value, 4)
+
+        self.spark.udf.registerJavaFunction(
+            "javaStringLength2", "test.org.apache.spark.sql.JavaStringLength")
+        [value] = self.spark.sql("SELECT javaStringLength2('test')").first()
+        self.assertEqual(value, 4)
+
+        self.spark.udf.registerJavaFunction(
+            "javaStringLength3", "test.org.apache.spark.sql.JavaStringLength", "integer")
+        [value] = self.spark.sql("SELECT javaStringLength3('test')").first()
+        self.assertEqual(value, 4)
+
+    @unittest.skipIf(not test_compiled, test_not_compiled_message)  # type: ignore
+    def test_register_java_udaf(self):
+        self.spark.udf.registerJavaUDAF("javaUDAF", "test.org.apache.spark.sql.MyDoubleAvg")
+        df = self.spark.createDataFrame([(1, "a"), (2, "b"), (3, "a")], ["id", "name"])
+        df.createOrReplaceTempView("df")
+        row = self.spark.sql(
+            "SELECT name, javaUDAF(id) as avg from df group by name order by name desc").first()
+        self.assertEqual(row.asDict(), Row(name='b', avg=102.0).asDict())
 
     def test_non_existed_udf(self):
         spark = self.spark
@@ -449,7 +465,6 @@ class UDFTests(ReusedSQLTestCase):
 
     def test_udf_with_decorator(self):
         from pyspark.sql.functions import lit
-        from pyspark.sql.types import IntegerType, DoubleType
 
         @udf(IntegerType())
         def add_one(x):
@@ -505,8 +520,6 @@ class UDFTests(ReusedSQLTestCase):
         )
 
     def test_udf_wrapper(self):
-        from pyspark.sql.types import IntegerType
-
         def f(x):
             """Identity"""
             return x
@@ -548,7 +561,7 @@ class UDFTests(ReusedSQLTestCase):
         self.assertEqual(rows, [Row(_1=1, _2=2, a=u'const_str')])
 
     # SPARK-24721
-    @unittest.skipIf(not test_compiled, test_not_compiled_message)
+    @unittest.skipIf(not test_compiled, test_not_compiled_message)  # type: ignore
     def test_datasource_with_udf(self):
         from pyspark.sql.functions import lit, col
 
@@ -562,7 +575,7 @@ class UDFTests(ReusedSQLTestCase):
                 .format("org.apache.spark.sql.sources.SimpleScanSource") \
                 .option('from', 0).option('to', 1).load().toDF('i')
             datasource_v2_df = self.spark.read \
-                .format("org.apache.spark.sql.sources.v2.SimpleDataSourceV2") \
+                .format("org.apache.spark.sql.connector.SimpleDataSourceV2") \
                 .load().toDF('i', 'j')
 
             c1 = udf(lambda x: x + 1, 'int')(lit(1))
@@ -620,6 +633,47 @@ class UDFTests(ReusedSQLTestCase):
             result = sql("select i from values(0L) as data(i) where i in (select id from v)")
             self.assertEqual(result.collect(), [Row(i=0)])
 
+    def test_udf_globals_not_overwritten(self):
+        @udf('string')
+        def f():
+            assert "itertools" not in str(map)
+
+        self.spark.range(1).select(f()).collect()
+
+    def test_worker_original_stdin_closed(self):
+        # Test if it closes the original standard input of worker inherited from the daemon,
+        # and replaces it with '/dev/null'.  See SPARK-26175.
+        def task(iterator):
+            import sys
+            res = sys.stdin.read()
+            # Because the standard input is '/dev/null', it reaches to EOF.
+            assert res == '', "Expect read EOF from stdin."
+            return iterator
+
+        self.sc.parallelize(range(1), 1).mapPartitions(task).count()
+
+    def test_udf_with_256_args(self):
+        N = 256
+        data = [["data-%d" % i for i in range(N)]] * 5
+        df = self.spark.createDataFrame(data)
+
+        def f(*a):
+            return "success"
+
+        fUdf = udf(f, StringType())
+
+        r = df.select(fUdf(*df.columns))
+        self.assertEqual(r.first()[0], "success")
+
+    def test_udf_cache(self):
+        func = lambda x: x
+
+        df = self.spark.range(1)
+        df.select(udf(func)("id")).cache()
+
+        self.assertEqual(df.select(udf(func)("id"))._jdf.queryExecution()
+                         .withCachedData().getClass().getSimpleName(), 'InMemoryRelation')
+
 
 class UDFInitializationTests(unittest.TestCase):
     def tearDown(self):
@@ -643,11 +697,11 @@ class UDFInitializationTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    from pyspark.sql.tests.test_udf import *
+    from pyspark.sql.tests.test_udf import *  # noqa: F401
 
     try:
-        import xmlrunner
-        testRunner = xmlrunner.XMLTestRunner(output='target/test-reports')
+        import xmlrunner  # type: ignore
+        testRunner = xmlrunner.XMLTestRunner(output='target/test-reports', verbosity=2)
     except ImportError:
         testRunner = None
     unittest.main(testRunner=testRunner, verbosity=2)

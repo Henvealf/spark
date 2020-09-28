@@ -29,7 +29,7 @@ private[spark] class KubernetesExecutorBuilder {
   def buildFromFeatures(
       conf: KubernetesExecutorConf,
       secMgr: SecurityManager,
-      client: KubernetesClient): SparkPod = {
+      client: KubernetesClient): KubernetesExecutorSpec = {
     val initialPod = conf.get(Config.KUBERNETES_EXECUTOR_PODTEMPLATE_FILE)
       .map { file =>
         KubernetesUtils.loadPodFromTemplate(
@@ -41,12 +41,23 @@ private[spark] class KubernetesExecutorBuilder {
 
     val features = Seq(
       new BasicExecutorFeatureStep(conf, secMgr),
+      new ExecutorKubernetesCredentialsFeatureStep(conf),
       new MountSecretsFeatureStep(conf),
       new EnvSecretsFeatureStep(conf),
-      new LocalDirsFeatureStep(conf),
-      new MountVolumesFeatureStep(conf))
+      new MountVolumesFeatureStep(conf),
+      new LocalDirsFeatureStep(conf))
 
-    features.foldLeft(initialPod) { case (pod, feature) => feature.configurePod(pod) }
+    val spec = KubernetesExecutorSpec(
+      initialPod,
+      executorKubernetesResources = Seq.empty)
+
+    features.foldLeft(spec) { case (spec, feature) =>
+      val configuredPod = feature.configurePod(spec.pod)
+      val addedResources = feature.getAdditionalKubernetesResources()
+      KubernetesExecutorSpec(
+        configuredPod,
+        spec.executorKubernetesResources ++ addedResources)
+    }
   }
 
 }

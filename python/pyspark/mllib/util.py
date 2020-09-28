@@ -17,11 +17,6 @@
 
 import sys
 import numpy as np
-import warnings
-
-if sys.version > '3':
-    xrange = range
-    basestring = str
 
 from pyspark import SparkContext, since
 from pyspark.mllib.common import callMLlibFunc, inherit_doc
@@ -47,7 +42,7 @@ class MLUtils(object):
         nnz = len(items) - 1
         indices = np.zeros(nnz, dtype=np.int32)
         values = np.zeros(nnz)
-        for i in xrange(nnz):
+        for i in range(nnz):
             index, value = items[1 + i].split(":")
             indices[i] = int(index) - 1
             values[i] = float(value)
@@ -62,10 +57,10 @@ class MLUtils(object):
         v = _convert_to_vector(p.features)
         if isinstance(v, SparseVector):
             nnz = len(v.indices)
-            for i in xrange(nnz):
+            for i in range(nnz):
                 items.append(str(v.indices[i] + 1) + ":" + str(v.values[i]))
         else:
-            for i in xrange(len(v)):
+            for i in range(len(v)):
                 items.append(str(i + 1) + ":" + str(v[i]))
         return " ".join(items)
 
@@ -96,7 +91,7 @@ class MLUtils(object):
                             which leads to inconsistent feature
                             dimensions.
         :param minPartitions: min number of partitions
-        @return: labeled data stored as an RDD of LabeledPoint
+        :return: labeled data stored as an RDD of LabeledPoint
 
         >>> from tempfile import NamedTemporaryFile
         >>> from pyspark.mllib.util import MLUtils
@@ -157,7 +152,7 @@ class MLUtils(object):
         :param path: file or directory path in any Hadoop-supported file
                      system URI
         :param minPartitions: min number of partitions
-        @return: labeled data stored as an RDD of LabeledPoint
+        :return: labeled data stored as an RDD of LabeledPoint
 
         >>> from tempfile import NamedTemporaryFile
         >>> from pyspark.mllib.util import MLUtils
@@ -373,7 +368,7 @@ class Saveable(object):
          * human-readable (JSON) model metadata to path/metadata/
          * Parquet formatted data to path/data/
 
-        The model may be loaded using py:meth:`Loader.load`.
+        The model may be loaded using :py:meth:`Loader.load`.
 
         :param sc: Spark context used to save model data.
         :param path: Path specifying the directory in which to save
@@ -397,8 +392,8 @@ class JavaSaveable(Saveable):
         """Save this model to the given path."""
         if not isinstance(sc, SparkContext):
             raise TypeError("sc should be a SparkContext, got type %s" % type(sc))
-        if not isinstance(path, basestring):
-            raise TypeError("path should be a basestring, got type %s" % type(path))
+        if not isinstance(path, str):
+            raise TypeError("path should be a string, got type %s" % type(path))
         self._java_model.save(sc._jsc.sc(), path)
 
 
@@ -413,14 +408,14 @@ class Loader(object):
     def load(cls, sc, path):
         """
         Load a model from the given path. The model should have been
-        saved using py:meth:`Saveable.save`.
+        saved using :py:meth:`Saveable.save`.
 
         :param sc: Spark context used for loading model files.
         :param path: Path specifying the directory to which the model
                      was saved.
         :return: model instance
         """
-        raise NotImplemented
+        raise NotImplementedError
 
 
 @inherit_doc

@@ -20,7 +20,7 @@ import numpy as np
 from pyspark.ml import Estimator, Model, Transformer, UnaryTransformer
 from pyspark.ml.param import Param, Params, TypeConverters
 from pyspark.ml.util import DefaultParamsReadable, DefaultParamsWritable
-from pyspark.ml.wrapper import _java2py
+from pyspark.ml.wrapper import _java2py  # type: ignore
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import DoubleType
 from pyspark.testing.utils import ReusedPySparkTestCase as PySparkTestCase
@@ -62,7 +62,7 @@ def check_params(test_self, py_stage, check_params_exist=True):
                 continue  # Random seeds between Spark and PySpark are different
             java_default = _java2py(test_self.sc,
                                     java_stage.clear(java_param).getOrDefault(java_param))
-            py_stage._clear(p)
+            py_stage.clear(p)
             py_default = py_stage.getOrDefault(p)
             # equality test for NaN is always False
             if isinstance(java_default, float) and np.isnan(java_default):
@@ -116,7 +116,8 @@ class MockTransformer(Transformer, HasFake):
 
 class MockUnaryTransformer(UnaryTransformer, DefaultParamsReadable, DefaultParamsWritable):
 
-    shift = Param(Params._dummy(), "shift", "The amount by which to shift " +
+    shift = Param(Params._dummy(),  # type: ignore
+                  "shift", "The amount by which to shift " +
                   "data in a DataFrame",
                   typeConverter=TypeConverters.toFloat)
 

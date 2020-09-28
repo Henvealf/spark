@@ -34,10 +34,10 @@ abstract class LogicalPlan
   with Logging {
 
   /** Returns true if this subtree has data from a streaming data source. */
-  def isStreaming: Boolean = children.exists(_.isStreaming == true)
+  def isStreaming: Boolean = children.exists(_.isStreaming)
 
-  override def verboseStringWithSuffix: String = {
-    super.verboseString + statsCache.map(", " + _.toString).getOrElse("")
+  override def verboseStringWithSuffix(maxFields: Int): String = {
+    super.verboseString(maxFields) + statsCache.map(", " + _.toString).getOrElse("")
   }
 
   /**
@@ -169,8 +169,8 @@ abstract class UnaryNode extends LogicalPlan {
    * Generates all valid constraints including an set of aliased constraints by replacing the
    * original constraint expressions with the corresponding alias
    */
-  protected def getAllValidConstraints(projectList: Seq[NamedExpression]): Set[Expression] = {
-    var allConstraints = child.constraints.asInstanceOf[Set[Expression]]
+  protected def getAllValidConstraints(projectList: Seq[NamedExpression]): ExpressionSet = {
+    var allConstraints = child.constraints
     projectList.foreach {
       case a @ Alias(l: Literal, _) =>
         allConstraints += EqualNullSafe(a.toAttribute, l)
@@ -187,7 +187,7 @@ abstract class UnaryNode extends LogicalPlan {
     allConstraints
   }
 
-  override protected def validConstraints: Set[Expression] = child.constraints
+  override protected lazy val validConstraints: ExpressionSet = child.constraints
 }
 
 /**

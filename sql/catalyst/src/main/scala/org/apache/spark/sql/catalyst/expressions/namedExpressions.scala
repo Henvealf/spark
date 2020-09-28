@@ -85,6 +85,7 @@ trait NamedExpression extends Expression {
    *    e.g. top level attributes aliased in the SELECT clause, or column from a LocalRelation.
    * 2. Seq with a Single element: either the table name or the alias name of the table.
    * 3. Seq with 2 elements: database name and table name
+   * 4. Seq with 3 elements: catalog name, database name and table name
    */
   def qualifier: Seq[String]
 
@@ -109,7 +110,8 @@ trait NamedExpression extends Expression {
 
 abstract class Attribute extends LeafExpression with NamedExpression with NullIntolerant {
 
-  override def references: AttributeSet = AttributeSet(this)
+  @transient
+  override lazy val references: AttributeSet = AttributeSet(this)
 
   def withNullability(newNullability: Boolean): Attribute
   def withQualifier(newQualifier: Seq[String]): Attribute
@@ -235,8 +237,6 @@ case class AttributeReference(
     val qualifier: Seq[String] = Seq.empty[String])
   extends Attribute with Unevaluable {
 
-  // currently can only handle qualifier of length 2
-  require(qualifier.length <= 2)
   /**
    * Returns true iff the expression id is the same for both attributes.
    */
@@ -311,7 +311,7 @@ case class AttributeReference(
     }
   }
 
-  override def withMetadata(newMetadata: Metadata): Attribute = {
+  override def withMetadata(newMetadata: Metadata): AttributeReference = {
     AttributeReference(name, dataType, nullable, newMetadata)(exprId, qualifier)
   }
 
@@ -330,7 +330,9 @@ case class AttributeReference(
 
   // Since the expression id is not in the first constructor it is missing from the default
   // tree string.
-  override def simpleString: String = s"$name#${exprId.id}: ${dataType.simpleString}"
+  override def simpleString(maxFields: Int): String = {
+    s"$name#${exprId.id}: ${dataType.simpleString(maxFields)}"
+  }
 
   override def sql: String = {
     val qualifierPrefix = if (qualifier.nonEmpty) qualifier.mkString(".") + "." else ""
@@ -381,6 +383,7 @@ case class OuterReference(e: NamedExpression)
   override def nullable: Boolean = e.nullable
   override def prettyName: String = "outer"
 
+  override def sql: String = s"$prettyName(${e.sql})"
   override def name: String = e.name
   override def qualifier: Seq[String] = e.qualifier
   override def exprId: ExprId = e.exprId

@@ -69,9 +69,8 @@ case class ExternalRDDScanExec[T](
 
   protected override def doExecute(): RDD[InternalRow] = {
     val numOutputRows = longMetric("numOutputRows")
-    val outputDataType = outputObjAttr.dataType
     rdd.mapPartitionsInternal { iter =>
-      val outputObject = ObjectOperator.wrapObjectToRow(outputDataType)
+      val outputObject = ObjectOperator.wrapObjectToRow(outputObjectType)
       iter.map { value =>
         numOutputRows += 1
         outputObject(value)
@@ -79,7 +78,7 @@ case class ExternalRDDScanExec[T](
     }
   }
 
-  override def simpleString: String = {
+  override def simpleString(maxFields: Int): String = {
     s"$nodeName${output.mkString("[", ",", "]")}"
   }
 }
@@ -156,8 +155,8 @@ case class RDDScanExec(
     }
   }
 
-  override def simpleString: String = {
-    s"$nodeName${truncatedString(output, "[", ",", "]")}"
+  override def simpleString(maxFields: Int): String = {
+    s"$nodeName${truncatedString(output, "[", ",", "]", maxFields)}"
   }
 
   // Input can be InternalRow, has to be turned into UnsafeRows.
